@@ -1,4 +1,4 @@
-# HONOR MagicBook Pro FPC Fingerprint Sensor — Linux Driver Patch
+# HONOR MagicBook Pro 14 2025 FPC Fingerprint Sensor — Linux Driver Patch
 
 [English](#english) | [中文](#chinese)
 
