@@ -1,4 +1,4 @@
-# HONOR MagicBook Pro (FMB-P) 指纹传感器 Linux 适配教程
+# HONOR MagicBook Pro 14 2025 (FMB-P) 指纹传感器 Linux 适配教程
 
 国内下载地址：![点我](https://www.reackcjq.top/d/%E8%B5%84%E6%BA%90/magicbook%20pro%2014%E6%8C%87%E7%BA%B9%E9%A9%B1%E5%8A%A8/honor-fpc-linux.zip)
 
