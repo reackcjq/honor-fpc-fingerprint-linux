@@ -1,216 +1,275 @@
-# HONOR MagicBook Pro (FMB-P) 指纹传感器 Linux 适配教程
+# HONOR MagicBook Pro FPC Fingerprint Sensor — Linux Driver Patch
 
-## 适用机型
+[English](#english) | [中文](#chinese)
+
+---
+
+<a id="english"></a>
+
+## English
+
+### Supported Hardware
+
+| Device | Sensor | USB ID |
+|--------|--------|--------|
+| HONOR MagicBook Pro FMB-P | FPC L:2407 FW:3334151 | `10a5:9924` |
+
+Other laptops with the same FPC L:2407 sensor may also work.
+
+### Quick Install (Ubuntu 26.04)
+
+```bash
+sudo dpkg -i deb/libfprint-2-2_1.95.1+tod1-0ubuntu1_amd64.deb \
+               deb/libfprint-2-tod1_1.95.1+tod1-0ubuntu1_amd64.deb
+sudo systemctl restart fprintd
+fprintd-enroll -f "right-index-finger" $USER
+fprintd-verify $USER                         # should show: verify-match
+sudo pam-auth-update --enable fprintd        # enable for sudo/login/unlock
+```
+
+### Build From Source (Any Distribution)
+
+The core patch `fpc-10a5-9924.patch` is distribution-agnostic. Requires **libfprint ≥ 1.94**.
+
+#### Ubuntu / Debian
+
+```bash
+sudo apt build-dep libfprint-2-2 -y
+apt source libfprint-2-2
+cd libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -b -uc -us
+sudo dpkg -i ../libfprint-2-2_*.deb ../libfprint-2-tod1_*.deb
+sudo systemctl restart fprintd
+```
+
+#### Fedora / RHEL
+
+```bash
+sudo dnf builddep libfprint
+dnf download --source libfprint
+rpm -ivh libfprint-*.src.rpm
+cd ~/rpmbuild/BUILD/libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+meson setup build && ninja -C build
+sudo ninja -C build install
+sudo ldconfig
+sudo systemctl restart fprintd
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S meson glib2 libusb nss gudev polkit pam
+git clone https://gitlab.freedesktop.org/libfprint/libfprint.git
+cd libfprint && git checkout v1.95.1
+patch -p1 < fpc-10a5-9924.patch
+meson setup build -Dudev_rules_dir=/usr/lib/udev/rules.d
+ninja -C build && sudo ninja -C build install
+sudo systemctl restart fprintd
+```
+
+#### openSUSE
+
+```bash
+sudo zypper source-install libfprint-2-2
+cd ~/rpmbuild/BUILD/libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+meson setup build && ninja -C build
+sudo ninja -C build install
+sudo systemctl restart fprintd
+```
+
+#### NixOS
+
+```nix
+# In configuration.nix:
+{ nixpkgs.overlays = [
+    (final: prev: {
+      libfprint = prev.libfprint.overrideAttrs (old: {
+        patches = (old.patches or []) ++ [ ./fpc-10a5-9924.patch ];
+      });
+    })
+  ];
+}
+```
+
+### After Installation
+
+```bash
+fprintd-list $USER                          # list enrolled fingers
+fprintd-enroll -f "left-index-finger" $USER # enroll more
+fprintd-delete $USER "right-index-finger"   # delete a finger
+fprintd-verify $USER                        # test verification
+sudo -k true                                # test sudo auth (clears password cache)
+```
+
+### What The Patch Does
+
+| Change | File | Purpose |
+|--------|------|---------|
+| Add USB ID | `fpc.c: id_table[]` | `{ .vid = 0x10A5, .pid = 0x9924 }` |
+| Add probe case | `fpc.c: fpc_dev_probe()` | `case 0x9924:` |
+| Fix verify callback | `fpc.c: fpc_verify_cb()` | Trust `status=0` match even with zero identity fields |
+
+The FPC L:2407 sensor returns `status=0` (match found) but with zero-filled identity fields (`subfactor=0x0, identity_type=0x0`), unlike other FPC sensors which use `0xF5/0x3`.
+
+### Debugging Other Sensors
+
+```bash
+# Stop service and run foreground with debug
+sudo systemctl stop fprintd
+sudo G_MESSAGES_DEBUG=all /usr/libexec/fprintd -t 2>&1 | tee /tmp/fprintd.log &
+
+# In another terminal:
+fprintd-verify $USER
+
+# Check key messages:
+grep -E "No driver|IDENTIFY response|error|fail" /tmp/fprintd.log
+```
+
+- `No driver found for USB device 10A5:XXXX` → PID not in id_table, add it
+- `IDENTIFY response: status=0, subfactor=0x0` → same sensor as this patch
+- `IDENTIFY response: status=0, subfactor=0xF5` → standard format, PID-only patch is enough
+
+---
+
+<a id="chinese"></a>
+
+## 中文
+
+### 适用硬件
 
 | 设备 | 传感器 | USB ID |
 |------|--------|--------|
 | HONOR MagicBook Pro FMB-P | FPC L:2407 FW:3334151 | `10a5:9924` |
 
-其他同款传感器(FPC L:2407)的笔记本也可参考。
+其他搭载同款 FPC L:2407 传感器的笔记本也可参考。
 
----
-
-## 方法一：直接安装 deb 包（推荐，最快）
-
-适用于 **Ubuntu 26.04 LTS**，其他版本需验证 libfprint 版本匹配。
-
-### 步骤
+### 快速安装 (Ubuntu 26.04)
 
 ```bash
-# 1. 进入 deb 包所在目录
-cd fingerprint-export/
-
-# 2. 安装修改后的 libfprint
-sudo dpkg -i libfprint-2-2_1.95.1+tod1-0ubuntu1_amd64.deb \
-               libfprint-2-tod1_1.95.1+tod1-0ubuntu1_amd64.deb
-
-# 3. 重启 fprintd 服务
+sudo dpkg -i deb/libfprint-2-2_1.95.1+tod1-0ubuntu1_amd64.deb \
+               deb/libfprint-2-tod1_1.95.1+tod1-0ubuntu1_amd64.deb
 sudo systemctl restart fprintd
-
-# 4. 验证传感器已被识别
-fprintd-list $USER
-# 输出应显示: FPC L:2407 FW:3334151
-
-# 5. 录入指纹
 fprintd-enroll -f "right-index-finger" $USER
-
-# 6. 测试验证
-fprintd-verify $USER
-# 输出应显示: verify-match (done)
-
-# 7. 启用 PAM 指纹认证 (sudo/登录/解锁)
-sudo pam-auth-update --enable fprintd
+fprintd-verify $USER                         # 应显示: verify-match
+sudo pam-auth-update --enable fprintd        # 启用 sudo/登录/解锁指纹认证
 ```
 
----
+### 源码编译 (通用，需 libfprint ≥ 1.94)
 
-## 方法二：从源码编译（适用于其他发行版/版本）
+核心补丁 `fpc-10a5-9924.patch` 跨发行版通用。
 
-### 前置依赖
+#### Ubuntu / Debian
 
 ```bash
-# Ubuntu/Debian
 sudo apt build-dep libfprint-2-2 -y
-sudo apt install -y build-essential devscripts
-
-# 如果 apt build-dep 失败，手动安装:
-sudo apt install -y meson pkg-config libglib2.0-dev libusb-1.0-0-dev \
-    libnss3-dev libgudev-1.0-dev libpolkit-gobject-1-dev \
-    libpam0g-dev libxml2-dev libcairo2-dev libgirepository1.0-dev \
-    gtk-doc-tools
+apt source libfprint-2-2
+cd libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -b -uc -us
+sudo dpkg -i ../libfprint-2-2_*.deb ../libfprint-2-tod1_*.deb
+sudo systemctl restart fprintd
 ```
 
-### 编译安装
+#### Fedora / RHEL
 
 ```bash
-# 1. 获取源码
-apt source libfprint-2-2
-cd libfprint-1.95.1+tod1/
-
-# 2. 应用补丁
-patch -p1 < ../fpc-10a5-9924.patch
-
-# 3. 编译 (跳过测试避免干扰)
-DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -b -uc -us
-
-# 4. 安装
-cd ..
-sudo dpkg -i libfprint-2-2_*.deb libfprint-2-tod1_*.deb
-
-# 5. 重启服务并录入
+sudo dnf builddep libfprint
+dnf download --source libfprint
+rpm -ivh libfprint-*.src.rpm
+cd ~/rpmbuild/BUILD/libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+meson setup build && ninja -C build
+sudo ninja -C build install
+sudo ldconfig
 sudo systemctl restart fprintd
-fprintd-enroll -f "right-index-finger" $USER
 ```
 
----
+#### Arch Linux
 
-## 补丁说明
-
-补丁文件 `fpc-10a5-9924.patch` 对 libfprint 做了三处修改：
-
-### 改动 1: 添加设备 ID 到驱动支持列表
-
-文件 `libfprint/drivers/fpcmoc/fpc.c`，函数 `id_table[]`：
-
-```c
-{ .vid = 0x10A5,  .pid = 0xC844,  },
-{ .vid = 0x10A5,  .pid = 0x9924,  },  // <-- 新增
+```bash
+sudo pacman -S meson glib2 libusb nss gudev polkit pam
+git clone https://gitlab.freedesktop.org/libfprint/libfprint.git
+cd libfprint && git checkout v1.95.1
+patch -p1 < fpc-10a5-9924.patch
+meson setup build -Dudev_rules_dir=/usr/lib/udev/rules.d
+ninja -C build && sudo ninja -C build install
+sudo systemctl restart fprintd
 ```
 
-### 改动 2: 添加设备 ID 到 probe 探测函数
+#### openSUSE
 
-同一文件，函数 `fpc_dev_probe()`，switch 语句：
-
-```c
-case 0xC844:
-case 0x9924:   // <-- 新增
-    self->max_enroll_stage = MAX_ENROLL_SAMPLES;
-    break;
+```bash
+sudo zypper source-install libfprint-2-2
+cd ~/rpmbuild/BUILD/libfprint-*/
+patch -p1 < fpc-10a5-9924.patch
+meson setup build && ninja -C build
+sudo ninja -C build install
+sudo systemctl restart fprintd
 ```
 
-### 改动 3: 修复验证回调，兼容非标准身份格式
+#### NixOS
 
-同一文件，函数 `fpc_verify_cb()`：
-
-FPC L:2407 传感器在 IDENTIFY 命令后返回 `status=0`（匹配成功），但身份数据字段（subfactor、identity_type、identity_size）全部为零，而不是其他 FPC 传感器使用的 `0xF5/0x3` 格式。
-
-在标准身份匹配逻辑之后添加了回退处理：
-
-```c
-/* Sensor returned match with zero identity fields */
-else if (presp->status == 0 && current_action == FPI_DEVICE_ACTION_VERIFY)
+```nix
+# configuration.nix 中添加 overlay:
 {
-    FpPrint *print = NULL;
-    fpi_device_get_verify_data(device, &print);
-    if (print) {
-        fpi_device_verify_report(device, FPI_MATCH_SUCCESS, print, error);
-        fpi_ssm_mark_completed(self->task_ssm);
-        return;
-    }
+  nixpkgs.overlays = [
+    (final: prev: {
+      libfprint = prev.libfprint.overrideAttrs (old: {
+        patches = (old.patches or []) ++ [
+          ./fpc-10a5-9924.patch
+        ];
+      });
+    })
+  ];
 }
 ```
 
----
-
-## 验证与使用
+### 安装后使用
 
 ```bash
-# 查看已录入指纹
-fprintd-list $USER
-
-# 录入更多手指
-fprintd-enroll -f "left-index-finger" $USER   # 左食指
-fprintd-enroll -f "right-middle-finger" $USER  # 右中指
-fprintd-enroll -f "right-thumb" $USER          # 右拇指
-
-# 删除指纹
-fprintd-delete $USER "right-index-finger"
-
-# 测试指纹验证
-fprintd-verify $USER
-
-# 测试 sudo 指纹认证
-sudo -k true    # (-k 清除密码缓存, 强制要求认证)
-
-# 指纹失败时自动回退密码, 无需额外操作
+fprintd-list $USER                          # 查看已录入指纹
+fprintd-enroll -f "left-index-finger" $USER # 录入更多手指
+fprintd-delete $USER "right-index-finger"   # 删除指纹
+fprintd-verify $USER                        # 测试验证
+sudo -k true                                # 测试 sudo 指纹认证
 ```
 
----
+### 补丁做了什么
 
-## 自定义补丁指南
+| 改动 | 位置 | 说明 |
+|------|------|------|
+| 添加 USB ID | `fpc.c: id_table[]` | `{ .vid = 0x10A5, .pid = 0x9924 }` |
+| 添加 probe 分支 | `fpc.c: fpc_dev_probe()` | `case 0x9924:` |
+| 修复验证回调 | `fpc.c: fpc_verify_cb()` | 传感器 status=0 匹配成功但身份字段为零时的回退处理 |
 
-如果你的传感器 USB ID 不同（同样是 FPC 但 PID 不同），只需修改补丁中的 PID：
+FPC L:2407 传感器在 IDENTIFY 命令后返回 `status=0`（匹配成功），但身份字段全为零，而非其他 FPC 传感器使用的 `0xF5/0x3` 标准格式。
 
-```bash
-# 1. 查看你的传感器 USB ID
-lsusb | grep FPC
-# 输出类似: Bus 003 Device 003: ID 10a5:XXXX FPC ...
-
-# 2. 在补丁中替换 0x9924 为你的 PID
-sed -i 's/0x9924/0xXXXX/g' fpc-10a5-9924.patch
-
-# 3. 同样替换 deb 包 (如需在其他 PID 上使用)
-```
-
-> **注意**: 不同 PID 的传感器协议可能不同。如果替换 PID 后验证失败，请检查 IDENTIFY 返回的身份格式。
-
-### 调试方法
+### 适配其他传感器
 
 ```bash
-# 停止服务，前台运行并查看完整日志
+# 前台运行并查看调试日志
 sudo systemctl stop fprintd
-sudo G_MESSAGES_DEBUG=all /usr/libexec/fprintd -t 2>&1 | tee /tmp/fprintd.log
-
-# 另一个终端中测试
-fprintd-verify $USER 2>&1
-
-# 查看关键日志
-grep -i "IDENTIFY response\|No driver\|error\|fail" /tmp/fprintd.log
+sudo G_MESSAGES_DEBUG=all /usr/libexec/fprintd -t 2>&1 | tee /tmp/fprintd.log &
+# 另一个终端:
+fprintd-verify $USER
+grep -E "No driver|IDENTIFY response|error|fail" /tmp/fprintd.log
 ```
 
-关键判断：
-- `No driver found for USB device 10A5:XXXX` → PID 未加入 id_table
-- `IDENTIFY response: status=0, subfactor=0x0, identity_type=0x0` → 和本机同款传感器，需应用完整补丁
-- `IDENTIFY response: status=0, subfactor=0xF5, identity_type=0x3` → 标准身份格式，只需添加 PID 即可
+- `No driver found for USB device 10A5:XXXX` → 将 PID 加入 id_table
+- `IDENTIFY response: status=0, subfactor=0x0` → 同款传感器，应用完整补丁
+- `IDENTIFY response: status=0, subfactor=0xF5` → 标准格式，只需加 PID
 
 ---
 
-## 文件清单
+## License
 
-```
-fingerprint-export/
-├── fpc-10a5-9924.patch                          # 补丁文件
-├── libfprint-2-2_1.95.1+tod1-0ubuntu1_amd64.deb  # 主库 deb
-├── libfprint-2-tod1_1.95.1+tod1-0ubuntu1_amd64.deb # TOD 驱动库 deb
-├── fpc-modified.c.bak                              # 修改后的完整源文件(备用)
-└── HONOR-MagicBook-FPC-指纹适配教程.md              # 本教程
-```
+MIT — see [LICENSE](LICENSE)
 
----
+## Note
 
-## 注意事项
-
-1. **系统更新会覆盖**: `sudo apt upgrade` 更新 libfprint 时需重新安装修改版 deb
-2. **内核更新不受影响**: libfprint 是用户态驱动，内核升级不影响
-3. **仅限同系统版本**: deb 包编译于 Ubuntu 26.04 LTS，其他版本请用源码编译方式
-4. **传感器清洁**: 指纹传感器表面保持清洁可获得更好识别率
+- System updates (`apt upgrade`) may overwrite the patched libfprint — reinstall the deb if needed
+- Kernel updates do not affect this userspace driver
+- Prebuilt debs are for Ubuntu 26.04 LTS — use source build for other versions
